@@ -125,14 +125,23 @@ def build_excel(df_fixed: pd.DataFrame, df_excluded: pd.DataFrame, start: date, 
             ws.cell(row=4, column=i, value=h)
         _style_header(ws, 4, len(headers))
 
+        CYAN_FILL = PatternFill("solid", fgColor=CYAN[2:])  # strip "FF" prefix
         r = 5
         for cat, row in pivot.iterrows():
             ws.cell(row=r, column=1, value=cat).font = BODY_FONT
+            row_vals = [float(row[c]) for c in cols]
+            max_val = max(row_vals) if row_vals else 0
             for i, c in enumerate(cols, start=2):
-                cell = ws.cell(row=r, column=i, value=float(row[c]))
+                v = float(row[c])
+                cell = ws.cell(row=r, column=i, value=v)
                 cell.number_format = 'R$ #,##0.00'
-                cell.font = BODY_FONT
                 cell.border = BORDER
+                if v > 0 and v == max_val:
+                    # Highlight the highest-spending company for this category
+                    cell.font = Font(name="Calibri", size=10, bold=True, color=WHITE)
+                    cell.fill = CYAN_FILL
+                else:
+                    cell.font = BODY_FONT
             tcell = ws.cell(row=r, column=len(headers), value=float(row["Total"]))
             tcell.font = Font(bold=True)
             tcell.number_format = 'R$ #,##0.00'

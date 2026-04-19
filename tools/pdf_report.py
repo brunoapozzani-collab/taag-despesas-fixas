@@ -174,6 +174,53 @@ def _stacked_bar(monthly_co: pd.DataFrame, title: str) -> io.BytesIO:
     buf.seek(0); return buf
 
 
+def _grouped_bar_categories(df_fixed: pd.DataFrame) -> io.BytesIO:
+    """Grouped horizontal bar chart: top categories × companies side-by-side."""
+    pivot = (
+        df_fixed.assign(V=df_fixed["Valor"].abs())
+        .pivot_table(index="Despesas", columns="Empresa", values="V", aggfunc="sum", fill_value=0)
+    )
+    if pivot.empty:
+        fig, ax = plt.subplots(figsize=(8, 4), dpi=160)
+        ax.text(0.5, 0.5, "Sem dados", ha="center", va="center"); ax.axis("off")
+        buf = io.BytesIO(); fig.savefig(buf, format="png", bbox_inches="tight", facecolor="white"); plt.close(fig)
+        buf.seek(0); return buf
+
+    pivot["_total"] = pivot.sum(axis=1)
+    pivot = pivot.sort_values("_total", ascending=False).head(12).drop(columns="_total")
+    pivot = pivot.iloc[::-1]  # reverse so top category is at top
+    companies = list(pivot.columns)
+    n_cats = len(pivot)
+    n_cos = len(companies)
+
+    bar_h = 0.7 / max(n_cos, 1)
+    fig, ax = plt.subplots(figsize=(8.5, max(4.5, n_cats * 0.65 + 1.5)), dpi=160)
+
+    for i, col in enumerate(companies):
+        offset = (i - n_cos / 2 + 0.5) * bar_h
+        ax.barh(
+            [p + offset for p in range(n_cats)],
+            pivot[col],
+            height=bar_h * 0.88,
+            color=PALETTE[i % len(PALETTE)],
+            label=col,
+        )
+
+    ax.set_yticks(list(range(n_cats)))
+    ax.set_yticklabels([str(c)[:32] for c in pivot.index], fontsize=8)
+    ax.set_xlabel("R$")
+    ax.xaxis.set_major_formatter(
+        plt.FuncFormatter(lambda x, _: f"R${x/1000:.0f}k" if x >= 1000 else f"R${x:.0f}")
+    )
+    ax.legend(bbox_to_anchor=(1.02, 1.0), loc="upper left", frameon=False, fontsize=8)
+    for spine in ("top", "right"):
+        ax.spines[spine].set_visible(False)
+    ax.tick_params(axis="both", labelsize=8)
+    fig.tight_layout()
+    buf = io.BytesIO(); fig.savefig(buf, format="png", bbox_inches="tight", facecolor="white"); plt.close(fig)
+    buf.seek(0); return buf
+
+
 def _bar_categories(df_cat: pd.DataFrame, title: str) -> io.BytesIO:
     fig, ax = plt.subplots(figsize=(7.0, 3.4), dpi=180)
     if df_cat.empty:
@@ -353,6 +400,74 @@ def build_pdf(df_fixed_all: pd.DataFrame, start: date, end: date) -> bytes:
                         scope="a composição mensal por empresa, comparando crescimento e participação"),
         s["body"],
     ))
+    story.append(PageBreak())
+
+    # ---- Page: Comparativo por Categoria × Empresa ----
+    story.append(Paragraph("Comparativo por Categoria", s["h1"]))
+    story.append(Paragraph(period, s["body"]))
+    story.append(Spacer(1, 0.2 * cm))
+    story.append(Paragraph(
+        "Quanto cada endereço gasta em cada categoria de despesa fixa. "
+        "As barras permitem comparar diretamente qual local tem o maior custo por item.",
+        s["body"],
+    ))
+    story.append(Spacer(1, 0.4 * cm))
+    story.append(_img(_grouped_bar_categories(df_fixed), 17 * cm, 12 * cm))
+    story.append(Spacer(1, 0.5 * cm))
+    story.append(Paragraph("Tabela Resumo — Categoria × Empresa (R$)", s["h2"]))
+
+    # Build pivot table for PDF
+    _pv = (
+        df_fixed.assign(V=df_fixed["Valor"].abs())
+        .pivot_table(index="Despesas", columns="Empresa", values="V", aggfunc="sum", fill_value=0)
+    )
+    _pv["_total"] = _pv.sum(axis=1)
+    _pv = _pv.sort_values("_total", ascending=False).drop(columns="_total")
+    _co_cols = [c for c in COMPANIES if c in _pv.columns]
+    _pv = _pv[_co_cols] if _co_cols else _pv
+
+    if not _pv.empty:
+        _col_w = (A4[0] - 4 * cm) / (len(_co_cols) + 2)
+        _tbl_rows = [["Categoria"] + _co_cols + ["Total"]]
+        for cat, row in _pv.iterrows():
+            _row_vals = [str(cat)[:30]]
+            for c in _co_cols:
+                v = float(row.get(c, 0))
+                _row_vals.append(brl(v) if v > 0 else "—")
+            _row_vals.append(brl(float(row[_co_cols].sum())))
+            _tbl_rows.append(_row_vals)
+        # Grand total row
+        _gt_row = ["TOTAL"]
+        for c in _co_cols:
+            _gt_row.append(brl(float(_pv[c].sum())))
+        _gt_row.append(brl(float(_pv[_co_cols].values.sum())))
+        _tbl_rows.append(_gt_row)
+
+        _t = Table(_tbl_rows, colWidths=[_col_w * 2] + [_col_w] * len(_co_cols) + [_col_w])
+        _style = [
+            ("BACKGROUND", (0, 0), (-1, 0), CYAN),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("BACKGROUND", (0, -1), (-1, -1), BLACK),
+            ("TEXTCOLOR", (0, -1), (-1, -1), colors.white),
+            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+            ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, LIGHT]),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ]
+        # Bold the max-value cell in each data row
+        for r_idx, (_, row) in enumerate(_pv.iterrows(), start=1):
+            row_vals = [float(row.get(c, 0)) for c in _co_cols]
+            if any(v > 0 for v in row_vals):
+                max_c_idx = row_vals.index(max(row_vals)) + 1  # +1 for Categoria col
+                _style.append(("FONTNAME", (max_c_idx, r_idx), (max_c_idx, r_idx), "Helvetica-Bold"))
+                _style.append(("TEXTCOLOR", (max_c_idx, r_idx), (max_c_idx, r_idx), CYAN))
+        _t.setStyle(TableStyle(_style))
+        story.append(_t)
     story.append(PageBreak())
 
     # ---- Per-company pages ----

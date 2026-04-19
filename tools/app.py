@@ -396,11 +396,35 @@ with tab_summary:
             hide_index=True, use_container_width=True,
         )
 
-        st.markdown("#### Por Empresa × Categoria")
-        by_cc = summarize_by_company_category(df_fixed)
+        st.markdown("#### Comparativo por Categoria × Empresa")
+        st.caption("Cada linha é uma categoria de despesa. Colunas = endereços. O maior gasto de cada linha fica destacado.")
+        _pv = (
+            df_fixed.assign(V=df_fixed["Valor"].abs())
+            .pivot_table(index="Despesas", columns="Empresa", values="V", aggfunc="sum", fill_value=0)
+        )
+        _pv["Total"] = _pv.sum(axis=1)
+        _pv = _pv.sort_values("Total", ascending=False)
+        _pv_display = _pv.copy()
+        # Format all cells as BRL strings
+        for col in _pv_display.columns:
+            _pv_display[col] = _pv_display[col].apply(lambda v: brl(v) if v > 0 else "—")
+
+        def _highlight_max(row):
+            # Find original numeric values for this row to highlight max
+            orig = _pv.loc[row.name]
+            num_cols = [c for c in orig.index if c != "Total"]
+            max_v = orig[num_cols].max()
+            styles = []
+            for col in row.index:
+                if col != "Total" and orig.get(col, 0) == max_v and max_v > 0:
+                    styles.append("background-color: #34b3d3; color: white; font-weight: bold")
+                else:
+                    styles.append("")
+            return styles
+
         st.dataframe(
-            by_cc.assign(Total=by_cc["Total"].map(brl)),
-            hide_index=True, use_container_width=True,
+            _pv_display.style.apply(_highlight_max, axis=1),
+            use_container_width=True,
         )
 
 # ---- Audit tab ----
