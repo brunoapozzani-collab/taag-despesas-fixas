@@ -201,21 +201,26 @@ with tab_review:
     # render's displayed DataFrame. _editor_row_ids maps those indices to row_ids.
     _editor_state = st.session_state.get("editor")
     _prev_row_ids = st.session_state.get("_editor_row_ids", [])
-    if isinstance(_editor_state, dict) and _prev_row_ids:
-        _edited_rows = _editor_state.get("edited_rows", {})
+    if _editor_state and _prev_row_ids:
+        _edited_rows = getattr(_editor_state, "edited_rows", None) or (
+            _editor_state.get("edited_rows", {}) if isinstance(_editor_state, dict) else {}
+        )
         _changed = False
-        for _row_idx_str, _changes in _edited_rows.items():
+        for _row_idx, _changes in _edited_rows.items():
             if "is_fixed" in _changes:
-                _row_idx = int(_row_idx_str)
-                if _row_idx < len(_prev_row_ids):
-                    _rid = _prev_row_ids[_row_idx]
+                _idx = int(_row_idx)
+                if _idx < len(_prev_row_ids):
+                    _rid = _prev_row_ids[_idx]
                     _new_val = bool(_changes["is_fixed"])
                     st.session_state.preset.manual_overrides[_rid] = _new_val
                     _mask = st.session_state.df_review["row_id"] == _rid
                     st.session_state.df_review.loc[_mask, "is_fixed"] = _new_val
                     _changed = True
         if _changed:
-            st.session_state.preset.save()
+            try:
+                st.session_state.preset.save()
+            except Exception:
+                pass
 
     c1, c2, c3 = st.columns(3)
     with c1:
