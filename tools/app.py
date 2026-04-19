@@ -179,6 +179,9 @@ if st.session_state.df_review is None:
 else:
     # Re-merge keeping any user toggles via row_id
     prev = st.session_state.df_review.set_index("row_id")["is_fixed"]
+    if prev.index.duplicated().any():
+        prev = prev[~prev.index.duplicated(keep="last")]
+    df_classified = df_classified.reset_index(drop=True)
     df_classified["is_fixed"] = df_classified.apply(
         lambda r: prev.get(r["row_id"], r["is_fixed"]), axis=1
     )
