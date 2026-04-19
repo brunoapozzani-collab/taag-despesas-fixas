@@ -285,22 +285,26 @@ with tab_review:
                 out.append(matched)
         return out
 
-    edits_map_fixed = {rid: _to_bool(v) for rid, v in zip(edited["row_id"], edited["is_fixed"])}
     edits_map_emp = {rid: str(v) for rid, v in zip(edited["row_id"], edited["Empresa"])}
 
-    # Apply is_fixed edits from data_editor to df_review
-    st.session_state.df_review["is_fixed"] = st.session_state.df_review.apply(
-        lambda r: edits_map_fixed.get(r["row_id"], _to_bool(r["is_fixed"])), axis=1
-    ).astype(bool)
+    # Apply is_fixed changes using ONLY the rows the user actually edited.
+    # st.session_state["editor"]["edited_rows"] is keyed by row POSITION (0-based),
+    # not row_id, so duplicate row_ids don't interfere.
+    editor_state = st.session_state.get("editor") or {}
+    edited_rows_map = editor_state.get("edited_rows", {}) if isinstance(editor_state, dict) else {}
 
-    # Only save rows where user actually CHANGED is_fixed (compare edited vs show_df)
-    _before = {rid: bool(v) for rid, v in zip(show_df["row_id"], show_df["is_fixed"])}
     _overrides_changed = False
-    for rid, new_val in edits_map_fixed.items():
-        old_val = _before.get(rid)
-        if old_val is not None and bool(new_val) != old_val:
-            st.session_state.preset.manual_overrides[rid] = bool(new_val)
-            _overrides_changed = True
+    for row_idx_str, changes in edited_rows_map.items():
+        if "is_fixed" in changes:
+            row_idx = int(row_idx_str)
+            if row_idx < len(show_df):
+                rid = show_df.iloc[row_idx]["row_id"]
+                new_val = _to_bool(changes["is_fixed"])
+                mask = st.session_state.df_review["row_id"] == rid
+                st.session_state.df_review.loc[mask, "is_fixed"] = new_val
+                st.session_state.preset.manual_overrides[rid] = new_val
+                _overrides_changed = True
+
     if _overrides_changed:
         st.session_state.preset.save()
 
