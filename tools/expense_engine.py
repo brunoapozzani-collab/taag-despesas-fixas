@@ -239,10 +239,14 @@ class Preset:
     def load(cls) -> "Preset":
         if PRESETS_PATH.exists():
             data = json.loads(PRESETS_PATH.read_text())
+            # Migrate: drop old-format overrides that contain dates (YYYY-)
+            raw_overrides = data.get("manual_overrides", {})
+            overrides = {k: v for k, v in raw_overrides.items()
+                         if not re.match(r"^\d{4}-", k)}
             return cls(
                 fixed_codes=data.get("fixed_codes", list(DEFAULT_FIXED_CODES)),
                 fixed_keywords=data.get("fixed_keywords", list(DEFAULT_FIXED_KEYWORDS)),
-                manual_overrides=data.get("manual_overrides", {}),
+                manual_overrides=overrides,
                 vendor_company_map=data.get("vendor_company_map", {}),
             )
         return cls()
@@ -253,10 +257,12 @@ class Preset:
 
 
 def row_hash(row) -> str:
-    """Stable id for a row so manual overrides survive between runs."""
+    """Stable id for a row so manual overrides survive between runs.
+
+    Uses vendor + description + cost code only (no date/amount) so that
+    the same recurring expense matches across different months.
+    """
     parts = [
-        str(row.get("Pagto")),
-        f"{row.get('Valor'):.2f}" if pd.notna(row.get("Valor")) else "",
         _strip(row.get("Favorecido")),
         _strip(row.get("Descricao")),
         str(row.get("CodDespesa")),

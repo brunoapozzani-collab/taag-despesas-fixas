@@ -196,6 +196,27 @@ with tab_review:
         "Use os filtros acima da tabela para focar em uma empresa ou categoria."
     )
 
+    # ---- Apply pending checkbox edits from previous interaction ----
+    # st.session_state.editor holds edits keyed by row index in the PREVIOUS
+    # render's displayed DataFrame. _editor_row_ids maps those indices to row_ids.
+    _editor_state = st.session_state.get("editor")
+    _prev_row_ids = st.session_state.get("_editor_row_ids", [])
+    if isinstance(_editor_state, dict) and _prev_row_ids:
+        _edited_rows = _editor_state.get("edited_rows", {})
+        _changed = False
+        for _row_idx_str, _changes in _edited_rows.items():
+            if "is_fixed" in _changes:
+                _row_idx = int(_row_idx_str)
+                if _row_idx < len(_prev_row_ids):
+                    _rid = _prev_row_ids[_row_idx]
+                    _new_val = bool(_changes["is_fixed"])
+                    st.session_state.preset.manual_overrides[_rid] = _new_val
+                    _mask = st.session_state.df_review["row_id"] == _rid
+                    st.session_state.df_review.loc[_mask, "is_fixed"] = _new_val
+                    _changed = True
+        if _changed:
+            st.session_state.preset.save()
+
     c1, c2, c3 = st.columns(3)
     with c1:
         f_emp = st.multiselect("Empresa", sorted(st.session_state.df_review["Empresa"].unique()))
@@ -244,14 +265,8 @@ with tab_review:
         key="editor",
     )
 
-    # ---- Coerce booleans (browser locale may return "Verdadeiro"/"Falso") ----
-    def _to_bool(v):
-        if isinstance(v, bool):
-            return v
-        if isinstance(v, (int, float)):
-            return bool(v)
-        s = str(v).strip().lower()
-        return s in ("true", "verdadeiro", "1", "sim", "yes")
+    # Store row_id mapping for next rerun's checkbox edit detection
+    st.session_state["_editor_row_ids"] = show_df["row_id"].tolist()
 
     # ---- Match free-text empresa input to canonical company names ----
     def _parse_companies(text: str) -> list[str]:
@@ -282,15 +297,7 @@ with tab_review:
                 out.append(matched)
         return out
 
-    edits_map_fixed = {rid: _to_bool(v) for rid, v in zip(edited["row_id"], edited["is_fixed"])}
     edits_map_emp = {rid: str(v) for rid, v in zip(edited["row_id"], edited["Empresa"])}
-
-    # Apply is_fixed edits
-    st.session_state.df_review["is_fixed"] = st.session_state.df_review.apply(
-        lambda r: edits_map_fixed.get(r["row_id"], _to_bool(r["is_fixed"])), axis=1
-    ).astype(bool)
-    for rid, is_fixed in edits_map_fixed.items():
-        st.session_state.preset.manual_overrides[rid] = bool(is_fixed)
 
     # Detect company changes that need confirmation
     if "pending_company_change" not in st.session_state:
