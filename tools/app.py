@@ -77,6 +77,8 @@ if "df_raw" not in st.session_state:
     st.session_state.df_raw = None
 if "df_review" not in st.session_state:
     st.session_state.df_review = None
+if "_filter_key" not in st.session_state:
+    st.session_state["_filter_key"] = None
 
 # ---- Sidebar ----
 with st.sidebar:
@@ -172,20 +174,17 @@ if df.empty:
     st.warning("Nenhuma linha encontrada no período selecionado (após exclusões).")
     st.stop()
 
+# Reset df_review only when the file or date range changes, not on every rerun.
+# This keeps the editor state stable while the user toggles multiple checkboxes.
+_filter_key = (id(st.session_state.df_raw), str(start), str(end))
+if st.session_state["_filter_key"] != _filter_key:
+    st.session_state["_filter_key"] = _filter_key
+    st.session_state.df_review = None
+
 df = apply_vendor_map(df, st.session_state.preset)
 df_classified = auto_classify_fixed(df, st.session_state.preset)
 if st.session_state.df_review is None:
-    st.session_state.df_review = df_classified.copy()
-else:
-    # Re-merge keeping any user toggles via row_id
-    prev = st.session_state.df_review.set_index("row_id")["is_fixed"]
-    if prev.index.duplicated().any():
-        prev = prev[~prev.index.duplicated(keep="last")]
-    df_classified = df_classified.reset_index(drop=True)
-    df_classified["is_fixed"] = df_classified.apply(
-        lambda r: prev.get(r["row_id"], r["is_fixed"]), axis=1
-    )
-    st.session_state.df_review = df_classified.copy()
+    st.session_state.df_review = df_classified.reset_index(drop=True).copy()
 
 tab_review, tab_summary, tab_audit, tab_generate = st.tabs(
     ["📋 Revisar Despesas", "📊 Resumo", "🔎 Auditoria", "📥 Gerar Relatórios"]
@@ -287,26 +286,25 @@ with tab_review:
 
     edits_map_emp = {rid: str(v) for rid, v in zip(edited["row_id"], edited["Empresa"])}
 
-    # Apply is_fixed changes using ONLY the rows the user actually edited.
-    # st.session_state["editor"]["edited_rows"] is keyed by row POSITION (0-based),
-    # not row_id, so duplicate row_ids don't interfere.
+    # Batch save: accumulate checkbox edits until the user clicks "Salvar".
+    # edited_rows is keyed by row POSITION (0-based) so duplicate row_ids don't interfere.
     editor_state = st.session_state.get("editor") or {}
     edited_rows_map = editor_state.get("edited_rows", {}) if isinstance(editor_state, dict) else {}
+    n_pending = sum(1 for ch in edited_rows_map.values() if "is_fixed" in ch)
 
-    _overrides_changed = False
-    for row_idx_str, changes in edited_rows_map.items():
-        if "is_fixed" in changes:
-            row_idx = int(row_idx_str)
-            if row_idx < len(show_df):
-                rid = show_df.iloc[row_idx]["row_id"]
-                new_val = _to_bool(changes["is_fixed"])
-                mask = st.session_state.df_review["row_id"] == rid
-                st.session_state.df_review.loc[mask, "is_fixed"] = new_val
-                st.session_state.preset.manual_overrides[rid] = new_val
-                _overrides_changed = True
-
-    if _overrides_changed:
-        st.session_state.preset.save()
+    if n_pending > 0:
+        if st.button(f"💾 Salvar {n_pending} alteração(ões)", type="primary"):
+            for row_idx_str, changes in edited_rows_map.items():
+                if "is_fixed" in changes:
+                    row_idx = int(row_idx_str)
+                    if row_idx < len(show_df):
+                        rid = show_df.iloc[row_idx]["row_id"]
+                        new_val = _to_bool(changes["is_fixed"])
+                        mask = st.session_state.df_review["row_id"] == rid
+                        st.session_state.df_review.loc[mask, "is_fixed"] = new_val
+                        st.session_state.preset.manual_overrides[rid] = new_val
+            st.session_state.preset.save()
+            st.rerun()
 
     # Detect company changes that need confirmation
     if "pending_company_change" not in st.session_state:
