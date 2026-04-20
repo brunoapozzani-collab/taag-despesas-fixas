@@ -110,6 +110,70 @@ def _fallback(facts: dict) -> str:
     return " ".join(parts) or "Sem dados suficientes para análise."
 
 
+def write_strategic_insights(
+    grand_total: float,
+    by_co: pd.DataFrame,
+    by_ceo: pd.DataFrame,
+    monthly: pd.DataFrame,
+    n_outros: int,
+) -> str:
+    """CEO strategic recommendations based on the full expense dataset."""
+    facts: dict = {"total_geral": _brl(grand_total)}
+    if not by_co.empty:
+        facts["localidades"] = [
+            {"empresa": str(r["Empresa"]), "total": _brl(float(r["Total"])),
+             "pct": f"{float(r['Total']) / grand_total * 100:.1f}%" if grand_total else "0%"}
+            for _, r in by_co.iterrows()
+        ]
+    if not by_ceo.empty:
+        facts["top_categorias"] = [
+            {"categoria": str(r["CeoCategoria"]), "total": _brl(float(r["Total"])),
+             "pct": f"{float(r['Total']) / grand_total * 100:.1f}%" if grand_total else "0%"}
+            for _, r in by_ceo.head(8).iterrows()
+        ]
+    if len(monthly) >= 2:
+        last = float(monthly["Total"].iloc[-1])
+        first = float(monthly["Total"].iloc[0])
+        delta_pct = (last - first) / first * 100 if first else 0
+        facts["tendencia"] = "alta" if delta_pct > 3 else ("baixa" if delta_pct < -3 else "estável")
+        facts["variacao_periodo"] = f"{delta_pct:+.1f}%"
+    facts["lancamentos_sem_localidade"] = n_outros
+
+    client = _client()
+    if client:
+        system = (
+            "Você é um consultor estratégico sênior preparando um briefing confidencial "
+            "para o CEO da TAAG Brasil. Use português brasileiro, tom executivo e direto. "
+            "Com base nos dados, produza 4 a 6 recomendações estratégicas concretas e acionáveis "
+            "sobre como reduzir, renegociar ou otimizar as despesas fixas operacionais. "
+            "Mencione localidades e categorias específicas. Máximo 200 palavras."
+        )
+        user = (
+            f"Dados de despesas fixas operacionais da TAAG Brasil:\n\n"
+            f"{json.dumps(facts, ensure_ascii=False, indent=2)}\n\n"
+            "Escreva as recomendações estratégicas para o CEO."
+        )
+        text = _call(client, system, user)
+        if text:
+            return text
+
+    # Programmatic fallback
+    parts = []
+    if facts.get("localidades"):
+        top = facts["localidades"][0]
+        parts.append(f"A localidade {top['empresa']} concentra {top['pct']} das despesas fixas — avaliar se o investimento é proporcional à receita da unidade.")
+    if facts.get("top_categorias"):
+        top_cat = facts["top_categorias"][0]
+        if "Aluguel" in str(top_cat.get("categoria", "")):
+            parts.append(f"Aluguel é o maior custo fixo ({top_cat['pct']}). Recomendar revisão dos contratos de locação e análise de consolidação de espaços.")
+        else:
+            parts.append(f"A categoria {top_cat['categoria']} lidera as despesas ({top_cat['pct']}). Avaliar oportunidades de otimização.")
+    if n_outros > 0:
+        parts.append(f"Existem {n_outros} lançamentos sem localidade definida. Atribuir corretamente para melhorar a gestão por unidade.")
+    parts.append("Recomendar análise semestral dos fornecedores de serviços recorrentes (telecom, segurança, limpeza) para renegociação de contratos.")
+    return " ".join(parts)
+
+
 def write_narrative(monthly: pd.DataFrame, by_category: pd.DataFrame,
                     by_vendor: pd.DataFrame, scope: str) -> str:
     """Return a Portuguese narrative paragraph for the given data slice."""

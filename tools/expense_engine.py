@@ -33,6 +33,59 @@ DEFAULT_FIXED_KEYWORDS = [
 
 EXCLUDE_KEYWORDS = ["cesar valverde"]
 
+# CEO-level expense categories — order matters (first match wins).
+# Keywords are matched against normalized (lowercase, no accents) Favorecido + Descricao + Despesas.
+CEO_CATEGORY_MAP: list[tuple[str, list[str]]] = [
+    ("Aluguel",                      ["aluguel"]),
+    ("IPTU",                         ["iptu"]),
+    ("Enel / Energia",               ["enel", "energia"]),
+    ("Sabesp / Água",                ["sabesp"]),
+    ("Claro / Net",                  ["claro", "net "]),
+    ("Telefone",                     ["telefone"]),
+    ("Vivo",                         ["vivo"]),
+    ("Hagana",                       ["hagana"]),
+    ("Limpa Vidros",                 ["limpa vidros"]),
+    ("Segurança",                    ["seguranca"]),
+    ("Grupo Gabriel",                ["grupo gabriel"]),
+    ("Sanear",                       ["sanear", "controle de pragas"]),
+    ("Supricorp / Gimba",            ["supricorp", "gimba"]),
+    ("Pão de Queijo",                ["pao de queijo"]),
+    ("Água Personalizada",           ["agua personalizada"]),
+    ("Impressora / Cartucho",        ["impressora", "cartucho", "plotter", "alcatoner"]),
+    ("Seguro Incêndio",              ["seguro incendio"]),
+    ("Auto de Licença",              ["auto de licenca"]),
+    ("Extintores",                   ["extintor"]),
+    ("Laudo Bombeiro",               ["laudo bombeiro"]),
+    ("Galão de Água",                ["galao"]),
+    ("Garagens",                     ["garagem", "box"]),
+    ("Cowork",                       ["regus", "cowork"]),
+    ("Depósito",                     ["deposito"]),
+]
+
+
+def assign_ceo_category(row) -> str:
+    """Map a row to one of the 24 CEO categories, or 'Outros Fixos'.
+
+    Two-pass strategy: vendor+description first (specific), then include
+    account-type column (Despesas) for broader matching.  This ensures
+    vendor-specific keywords (e.g. 'regus' → Cowork) win over account-type
+    labels (e.g. Despesas = 'Aluguel').
+    """
+    vendor_blob = " ".join([
+        _strip(row.get("Favorecido")),
+        _strip(row.get("Descricao")),
+        _strip(row.get("ContaSintetica")),
+    ])
+    for name, keywords in CEO_CATEGORY_MAP:
+        if any(kw in vendor_blob for kw in keywords):
+            return name
+    # Second pass: include the account-type field
+    full_blob = vendor_blob + " " + _strip(row.get("Despesas"))
+    for name, keywords in CEO_CATEGORY_MAP:
+        if any(kw in full_blob for kw in keywords):
+            return name
+    return "Outros Fixos"
+
 # Keys are normalized (lowercased, accent-stripped). Order matters: more specific first.
 PROJETO_ALIASES = {
     # Rio de Janeiro

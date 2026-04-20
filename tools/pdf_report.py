@@ -29,10 +29,10 @@ from reportlab.platypus import (
 )
 
 from expense_engine import (
-    COMPANIES, monthly_by_company, monthly_total,
+    COMPANIES, assign_ceo_category, monthly_by_company, monthly_total,
     summarize_by_company, summarize_by_company_category, top_vendors,
 )
-from narrative import write_narrative
+from narrative import write_narrative, write_strategic_insights
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 LOGO_PATH = DATA_DIR / "logo.png"
@@ -256,6 +256,7 @@ def build_pdf(df_fixed_all: pd.DataFrame, start: date, end: date) -> bytes:
     """Build the executive summary PDF and return its bytes."""
     # Exclude Outros from PDF entirely (per requirement)
     df_fixed = df_fixed_all[df_fixed_all["Empresa"] != "Outros"].copy()
+    df_fixed["CeoCategoria"] = df_fixed.apply(assign_ceo_category, axis=1)
 
     s = _styles()
     buf = io.BytesIO()
@@ -489,15 +490,35 @@ def build_pdf(df_fixed_all: pd.DataFrame, start: date, end: date) -> bytes:
         story.append(Paragraph("Evolução Mensal", s["h2"]))
         story.append(_img(_line_progression(monthly_e, ""), 16 * cm, 6.5 * cm))
 
-        # Top categories
+        # CEO categories with % breakdown
         cat = (
             sub.assign(V=sub["Valor"].abs())
-            .groupby("Despesas", as_index=False)["V"].sum()
-            .rename(columns={"V": "Total"})
+            .groupby("CeoCategoria", as_index=False)["V"].sum()
+            .rename(columns={"V": "Total", "CeoCategoria": "Despesas"})
             .sort_values("Total", ascending=False)
         )
-        story.append(Paragraph("Top Categorias", s["h2"]))
+        story.append(Paragraph("Categorias de Despesa", s["h2"]))
         story.append(_img(_bar_categories(cat, ""), 16 * cm, 6.5 * cm))
+
+        # Category table with % of location total
+        if not cat.empty:
+            cat_rows = [["Categoria", "Total (R$)", "% do Local"]]
+            for _, cr in cat.iterrows():
+                pct = float(cr["Total"]) / total * 100 if total else 0
+                cat_rows.append([str(cr["Despesas"]), brl(float(cr["Total"])), f"{pct:.1f}%"])
+            ct = Table(cat_rows, colWidths=[9 * cm, 4 * cm, 3 * cm])
+            ct.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), CYAN),
+                ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
+                ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ALIGN",      (1, 0), (-1, -1), "RIGHT"),
+                ("FONTSIZE",   (0, 0), (-1, -1), 9),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT]),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ]))
+            story.append(ct)
+            story.append(Spacer(1, 0.3 * cm))
 
         # Top vendors
         tv = top_vendors(df_fixed, empresa, n=8)
@@ -538,6 +559,65 @@ def build_pdf(df_fixed_all: pd.DataFrame, start: date, end: date) -> bytes:
             s["body"],
         ))
         story.append(PageBreak())
+
+    # ---- Page: Strategic Insights for CEO ----
+    story.append(Paragraph("Análise Estratégica para o CEO", s["h1"]))
+    story.append(Paragraph(period, s["body"]))
+    story.append(Spacer(1, 0.4 * cm))
+
+    # Key metrics table
+    by_co_s = summarize_by_company(df_fixed)
+    by_ceo_s = (
+        df_fixed.assign(V=df_fixed["Valor"].abs())
+        .groupby("CeoCategoria", as_index=False)["V"].sum()
+        .rename(columns={"V": "Total"})
+        .sort_values("Total", ascending=False)
+    )
+    monthly_s = monthly_total(df_fixed)
+    n_outros_s = int((df_fixed_all["Empresa"] == "Outros").sum())
+
+    story.append(Paragraph("Onde a empresa está gastando mais", s["h2"]))
+    if not by_ceo_s.empty:
+        insight_rows = [["Categoria", "Total", "% do Total"]]
+        for _, r in by_ceo_s.head(8).iterrows():
+            pct = float(r["Total"]) / grand_total * 100 if grand_total else 0
+            insight_rows.append([str(r["CeoCategoria"]), brl(float(r["Total"])), f"{pct:.1f}%"])
+        it = Table(insight_rows, colWidths=[9 * cm, 4 * cm, 3 * cm])
+        it.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0), BLACK),
+            ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ALIGN",         (1, 0), (-1, -1), "RIGHT"),
+            ("FONTSIZE",      (0, 0), (-1, -1), 9),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, LIGHT]),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ]))
+        story.append(it)
+
+    story.append(Spacer(1, 0.5 * cm))
+    story.append(Paragraph("Recomendações Estratégicas", s["h2"]))
+    story.append(Spacer(1, 0.2 * cm))
+    story.append(_narrative_box(
+        write_strategic_insights(
+            grand_total=grand_total,
+            by_co=by_co_s,
+            by_ceo=by_ceo_s,
+            monthly=monthly_s,
+            n_outros=n_outros_s,
+        ),
+        s["body"],
+    ))
+
+    if n_outros_s > 0:
+        story.append(Spacer(1, 0.3 * cm))
+        story.append(Paragraph("Atenção Operacional", s["h2"]))
+        story.append(_narrative_box(
+            f"{n_outros_s} lançamento(s) não têm localidade definida (classificados como 'Outros'). "
+            "Estes valores não aparecem nos totais por empresa e podem distorcer a análise. "
+            "Recomenda-se revisar e atribuir cada lançamento à sua unidade correspondente.",
+            s["body"],
+        ))
 
     doc.build(story, onLaterPages=_draw_footer)
     return buf.getvalue()
