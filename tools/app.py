@@ -16,9 +16,9 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from expense_engine import (
-    COMPANIES, DEFAULT_FIXED_KEYWORDS, Preset, apply_vendor_map, auto_classify_fixed,
-    exclude_personal, filter_by_date, load_workbook_dataframe, only_debits,
-    summarize_by_company, summarize_by_company_category,
+    COMPANIES, DEFAULT_FIXED_KEYWORDS, Preset, apply_vendor_map, assign_ceo_category,
+    auto_classify_fixed, exclude_personal, filter_by_date, load_workbook_dataframe,
+    only_debits, summarize_by_company, summarize_by_company_category,
 )
 from excel_report import build_excel
 from pdf_report import brl, build_pdf
@@ -184,7 +184,9 @@ if st.session_state["_filter_key"] != _filter_key:
 df = apply_vendor_map(df, st.session_state.preset)
 df_classified = auto_classify_fixed(df, st.session_state.preset)
 if st.session_state.df_review is None:
-    st.session_state.df_review = df_classified.reset_index(drop=True).copy()
+    _rev = df_classified.reset_index(drop=True).copy()
+    _rev["CeoCategoria"] = _rev.apply(assign_ceo_category, axis=1)
+    st.session_state.df_review = _rev
 
 tab_review, tab_summary, tab_audit, tab_generate = st.tabs(
     ["📋 Revisar Despesas", "📊 Resumo", "🔎 Auditoria", "📥 Gerar Relatórios"]
@@ -398,9 +400,10 @@ with tab_summary:
 
         st.markdown("#### Comparativo por Categoria × Empresa")
         st.caption("Cada linha é uma categoria de despesa. Colunas = endereços. O maior gasto de cada linha fica destacado.")
+        _cat_col = "CeoCategoria" if "CeoCategoria" in df_fixed.columns else "Despesas"
         _pv = (
             df_fixed.assign(V=df_fixed["Valor"].abs())
-            .pivot_table(index="Despesas", columns="Empresa", values="V", aggfunc="sum", fill_value=0)
+            .pivot_table(index=_cat_col, columns="Empresa", values="V", aggfunc="sum", fill_value=0)
         )
         _pv["Total"] = _pv.sum(axis=1)
         _pv = _pv.sort_values("Total", ascending=False)

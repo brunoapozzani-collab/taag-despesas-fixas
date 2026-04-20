@@ -178,7 +178,7 @@ def _grouped_bar_categories(df_fixed: pd.DataFrame) -> io.BytesIO:
     """Grouped horizontal bar chart: top categories × companies side-by-side."""
     pivot = (
         df_fixed.assign(V=df_fixed["Valor"].abs())
-        .pivot_table(index="Despesas", columns="Empresa", values="V", aggfunc="sum", fill_value=0)
+        .pivot_table(index="CeoCategoria", columns="Empresa", values="V", aggfunc="sum", fill_value=0)
     )
     if pivot.empty:
         fig, ax = plt.subplots(figsize=(8, 4), dpi=160)
@@ -325,8 +325,9 @@ def build_pdf(df_fixed_all: pd.DataFrame, start: date, end: date) -> bytes:
     monthly_all = monthly_total(df_fixed)
     by_cat_all = (
         df_fixed.assign(V=df_fixed["Valor"].abs())
-        .groupby("Despesas", as_index=False)["V"].sum()
-        .rename(columns={"V": "Total"}).sort_values("Total", ascending=False)
+        .groupby("CeoCategoria", as_index=False)["V"].sum()
+        .rename(columns={"V": "Total", "CeoCategoria": "Despesas"})
+        .sort_values("Total", ascending=False)
     )
     by_vendor_all = (
         df_fixed.assign(V=df_fixed["Valor"].abs())
@@ -420,7 +421,7 @@ def build_pdf(df_fixed_all: pd.DataFrame, start: date, end: date) -> bytes:
     # Build pivot table for PDF
     _pv = (
         df_fixed.assign(V=df_fixed["Valor"].abs())
-        .pivot_table(index="Despesas", columns="Empresa", values="V", aggfunc="sum", fill_value=0)
+        .pivot_table(index="CeoCategoria", columns="Empresa", values="V", aggfunc="sum", fill_value=0)
     )
     _pv["_total"] = _pv.sum(axis=1)
     _pv = _pv.sort_values("_total", ascending=False).drop(columns="_total")
