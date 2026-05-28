@@ -22,9 +22,17 @@ from expense_engine import (
 )
 from excel_report import build_excel
 from pdf_report import brl, build_pdf
+from sync import sync_ceo_categories, build_and_push_upload
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 LOGO = DATA_DIR / "logo.png"
+
+if "startup_sync_done" not in st.session_state:
+    st.session_state.startup_sync_done = True
+    try:
+        sync_ceo_categories()
+    except Exception:
+        pass
 
 st.set_page_config(
     page_title="TAAG • Despesas Fixas",
@@ -87,7 +95,12 @@ with st.sidebar:
     if upload is not None:
         try:
             with st.spinner("Carregando planilha…"):
+                upload_bytes = upload.read()
+                upload.seek(0)  # reset for load_workbook_dataframe
                 st.session_state.df_raw = load_workbook_dataframe(upload)
+                # Store raw bytes + filename for Storage upload on confirm
+                st.session_state["_upload_bytes"] = upload_bytes
+                st.session_state["_upload_filename"] = upload.name
             st.success(f"{len(st.session_state.df_raw):,} linhas carregadas.")
         except Exception as e:
             st.error(f"Erro ao ler a planilha: {e}")
@@ -552,6 +565,22 @@ with tab_generate:
             else:
                 st.session_state.xlsx_bytes = None
             st.session_state.output_period = (ds, de)
+
+            # Push to Supabase (Storage + transactions + monthly_rollups)
+            # Requires the original upload bytes; read from session state if available.
+            if st.session_state.get("_upload_bytes") and st.session_state.get("_upload_filename"):
+                with st.spinner("Sincronizando com Supabase…"):
+                    result = build_and_push_upload(
+                        df_fixed=df_fixed,
+                        period_start=start,
+                        period_end=end,
+                        filename=st.session_state["_upload_filename"],
+                        file_bytes=st.session_state["_upload_bytes"],
+                    )
+                if result.get("ok"):
+                    st.session_state["_last_upload_id"] = result.get("upload_id")
+                # Silently ignore failures — local reports are still generated
+
             st.success("Relatórios gerados com sucesso!")
 
     # Persistent download buttons (survive reruns caused by other widgets)

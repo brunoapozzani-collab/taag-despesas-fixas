@@ -1,0 +1,19 @@
+{
+  "fixed_codes": [
+    301,
+    302,
+    303,
+    304,
+    305,
+    306,
+    309,
+    310
+  ],
+  "fixed_keywords": [
+    "aluguel",
+    "iptu",
+    "test-offline-keyword"
+  ],
+  "manual_overrides": {},
+  "vendor_company_map": {}
+}

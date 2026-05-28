@@ -15,7 +15,6 @@ from typing import Iterable
 import pandas as pd
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-PRESETS_PATH = DATA_DIR / "presets.json"
 
 COMPANIES = ["Rio de Janeiro", "Alameda 470", "Artur de Azevedo", "Mazzini", "Alameda 334"]
 
@@ -290,23 +289,34 @@ class Preset:
 
     @classmethod
     def load(cls) -> "Preset":
-        if PRESETS_PATH.exists():
-            data = json.loads(PRESETS_PATH.read_text())
-            # Migrate: drop old-format overrides that contain dates (YYYY-)
-            raw_overrides = data.get("manual_overrides", {})
-            overrides = {k: v for k, v in raw_overrides.items()
-                         if not re.match(r"^\d{4}-", k)}
-            return cls(
-                fixed_codes=data.get("fixed_codes", list(DEFAULT_FIXED_CODES)),
-                fixed_keywords=data.get("fixed_keywords", list(DEFAULT_FIXED_KEYWORDS)),
-                manual_overrides=overrides,
-                vendor_company_map=data.get("vendor_company_map", {}),
-            )
-        return cls()
+        """Load the singleton preset from Supabase.
+
+        Raises RuntimeError if Supabase is unreachable. No local fallback by
+        design — a fallback creates divergent reads during an outage. Loud
+        failure is correct here. The dated backup file (presets.backup.*.json)
+        is a manual disaster-recovery artifact, not a runtime fallback.
+        """
+        from supabase_client import load_preset
+        data = load_preset()
+        # Drop old-format overrides whose keys are dates (YYYY-...) — migration guard
+        raw_overrides = data.get("manual_overrides", {})
+        overrides = {k: v for k, v in raw_overrides.items()
+                     if not re.match(r"^\d{4}-", k)}
+        return cls(
+            fixed_codes=data.get("fixed_codes", list(DEFAULT_FIXED_CODES)),
+            fixed_keywords=data.get("fixed_keywords", list(DEFAULT_FIXED_KEYWORDS)),
+            manual_overrides=overrides,
+            vendor_company_map=data.get("vendor_company_map", {}),
+        )
 
     def save(self) -> None:
-        PRESETS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        PRESETS_PATH.write_text(self.to_json())
+        """UPSERT the singleton preset to Supabase.
+
+        Raises RuntimeError if Supabase is unreachable. Supabase is now the
+        sole source of truth — there is no local fallback.
+        """
+        from supabase_client import upsert_preset
+        upsert_preset(json.loads(self.to_json()))
 
 
 def row_hash(row) -> str:
